@@ -7,21 +7,16 @@ const { JWT_SECRET } = process.env;
 
 exports.register = async (req, res) => {
   try {
-    // 1. Terima data MURNI dari Frontend (sudah 'issuer'/'owner')
-    // Frontend mengirim: { fullName, email, password, role }
     const { fullName, full_name, email, password, role } = req.body;
 
     const nameToSave = fullName || full_name;
 
-    // 2. Validasi Input
     if (!email || !password || !nameToSave || !role) {
       return res.status(400).json({
         message: "Semua field (Nama, Email, Password, Role) harus diisi.",
       });
     }
 
-    // 3. Validasi Role (Gunakan Bahasa Inggris)
-    // 'admin' tidak boleh daftar sendiri via API public
     const validRoles = ["issuer", "owner"];
     if (!validRoles.includes(role)) {
       return res.status(400).json({
@@ -29,14 +24,12 @@ exports.register = async (req, res) => {
       });
     }
 
-    // 4. Hash Password
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
 
     let status = "active";
     let finalInstId = null;
 
-    // 5. Logika Khusus Issuer (Penerbit)
     if (role === "issuer") {
       status = "pending_approval";
 
@@ -46,7 +39,6 @@ exports.register = async (req, res) => {
       }
       const emailDomain = emailParts[1];
 
-      // Cari Admin (Role 'admin') dengan domain email yang sama
       const adminQuery = `
             SELECT inst_id, email FROM USERS 
             WHERE role = 'admin' AND email LIKE $1 
@@ -65,7 +57,6 @@ exports.register = async (req, res) => {
       console.log(`Issuer detected from Institution ID: ${finalInstId}`);
     }
 
-    // 6. Simpan ke Database (Langsung simpan 'issuer'/'owner')
     const newUserQuery = `
         INSERT INTO USERS (email, password_hash, full_name, "role", inst_id, "status")
         VALUES ($1, $2, $3, $4, $5, $6)
@@ -76,12 +67,11 @@ exports.register = async (req, res) => {
       email,
       password_hash,
       nameToSave,
-      role, // Simpan 'issuer' atau 'owner'
+      role,
       finalInstId,
       status,
     ]);
 
-    // 7. Response
     res.status(201).json({
       message:
         role === "issuer"
@@ -131,7 +121,8 @@ exports.login = async (req, res) => {
 
     const payload = {
       userId: user.user_id,
-      role: user.role, // Ini akan berisi 'issuer', 'owner', atau 'admin'
+      role: user.role,
+      instId: user.inst_id,
     };
 
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1d" });
@@ -142,7 +133,8 @@ exports.login = async (req, res) => {
       user: {
         userId: user.user_id,
         email: user.email,
-        role: user.role, // Frontend akan menerima 'issuer'/'owner'
+        role: user.role,
+        instId: user.inst_id, // Kirim juga ke frontend
         fullName: user.full_name,
       },
     });
