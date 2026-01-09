@@ -41,4 +41,13 @@ router.get(
   credentialController.getIssuerDashboardData
 );
 
+// 5. GET: List Dokumen Milik Saya (Untuk Holder Dashboard)
+// Endpoint ini akan dipanggil oleh Frontend: /api/credentials/my-documents
+router.get(
+  "/my-documents",
+  verifyToken,
+  authorizeRole(["owner"]), // Pastikan role ini sesuai ("owner" atau "student")
+  credentialController.getMyCredentials
+);
+
 module.exports = router;

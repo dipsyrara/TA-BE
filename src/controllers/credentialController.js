@@ -59,8 +59,6 @@ exports.issueCredential = async (req, res) => {
     const doc_serial_number_hash = await bcrypt.hash(serial_number, salt);
 
     // Untuk secret answer, kita gunakan mother_name (jika ada) atau default value/program_name
-    // Ini harus disepakati: apa "kunci rahasia" untuk sertifikat?
-    // Jika sertifikat tidak butuh secret answer kompleks, bisa pakai serial number lagi atau string kosong yang di-hash
     let secretAnswerRaw = mother_name || serial_number;
     const secret_answer_hash = await bcrypt.hash(secretAnswerRaw, salt);
     // -------------------------------------------
@@ -72,13 +70,13 @@ exports.issueCredential = async (req, res) => {
       fileStream,
       file.originalname
     );
-    // URL ini aman untuk metadata, tapi untuk akses publik frontend kita gunakan gateway
+    // URL ini aman untuk metadata
     const fileUrlIpfs = `ipfs://${assetCid}`;
 
     // 4. Buat & Upload Metadata JSON ke IPFS
     console.log("[IPFS] Membuat Metadata JSON...");
 
-    // Tentukan atribut berdasarkan jenis dokumen agar metadata rapi
+    // Tentukan atribut berdasarkan jenis dokumen
     const attributes = [
       { trait_type: "Recipient Name", value: recipient_name },
       { trait_type: "Document Type", value: document_type },
@@ -86,7 +84,6 @@ exports.issueCredential = async (req, res) => {
       { trait_type: "Serial Number", value: serial_number },
     ];
 
-    // Tambahkan atribut kondisional (Hanya jika ada isinya)
     if (recipient_nim)
       attributes.push({ trait_type: "NIM", value: recipient_nim });
     if (program_name)
@@ -94,7 +91,6 @@ exports.issueCredential = async (req, res) => {
         trait_type: "Certification/Program",
         value: program_name,
       });
-    // Catatan: mother_name TIDAK dimasukkan ke metadata publik demi privasi
 
     const metadata = {
       name: `${document_type} - ${recipient_name}`,
@@ -122,7 +118,6 @@ exports.issueCredential = async (req, res) => {
     const transferEvent = receipt.logs.find((e) => e.eventName === "Transfer");
     let tokenId = "0";
     if (transferEvent) {
-      // args[2] adalah tokenId dalam standar ERC721 OpenZeppelin
       tokenId = transferEvent.args[2].toString();
     } else {
       console.warn(
@@ -139,7 +134,7 @@ exports.issueCredential = async (req, res) => {
                 recipient_name, recipient_nim, mother_name,
                 document_type, program_name, serial_number, issue_date,
                 file_url, ipfs_hash, token_id, tx_hash, status,
-                doc_serial_number_hash, secret_answer_hash -- Tambahkan kolom hash
+                doc_serial_number_hash, secret_answer_hash
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'issued', $14, $15)
             RETURNING credential_id;
         `;
@@ -175,7 +170,6 @@ exports.issueCredential = async (req, res) => {
     });
   } catch (error) {
     console.error("[ERROR] Issue Credential:", error);
-    // Handle error duplicate serial number (kode error PostgreSQL untuk Unique Violation)
     if (error.code === "23505") {
       return res.status(400).json({
         message: "Nomor Seri Dokumen sudah terdaftar di institusi ini.",
@@ -218,7 +212,6 @@ exports.claimCredential = async (req, res) => {
 
     if (credential.document_type === "Ijazah Sarjana") {
       // Validasi Ketat: NIM & Nama Ibu
-      // Menggunakan Optional Chaining (?.) untuk keamanan jika data null
       const dbMother = credential.mother_name
         ? credential.mother_name.toLowerCase().trim()
         : "";
@@ -272,13 +265,13 @@ exports.claimCredential = async (req, res) => {
     );
     await tx.wait();
 
-    // 6. Update Status di DB
+    // 6. Update Status di DB dan Set Owner Baru
     const updateQuery = `
             UPDATE CREDENTIALS 
-            SET status = 'claimed'
-            WHERE credential_id = $1
+            SET status = 'claimed', owner_id = $1
+            WHERE credential_id = $2
         `;
-    await db.query(updateQuery, [cred_id]);
+    await db.query(updateQuery, [userId, cred_id]);
 
     res.status(200).json({
       message: "Klaim Berhasil! Aset kini ada di wallet Anda.",
@@ -301,12 +294,10 @@ exports.searchCredentials = async (req, res) => {
   try {
     const { name, institution } = req.query;
 
-    // Menampilkan 5 hasil teratas yang cocok
     const query = `
             SELECT 
                 c.credential_id, c.recipient_name, c.issue_date, 
                 i.name as institution_name, c.document_type,
-                -- Masking NIM agar aman (130*****50)
                 CONCAT(LEFT(c.recipient_nim, 3), '*****', RIGHT(c.recipient_nim, 2)) as masked_nim
             FROM CREDENTIALS c
             JOIN INSTITUTIONS i ON c.inst_id = i.inst_id
@@ -361,7 +352,11 @@ exports.verifyCredential = async (req, res) => {
   }
 };
 
-//Get Issuer Dashboard (Stats)
+// ==========================================
+// 4. DASHBOARD DATA
+// ==========================================
+
+// Get Issuer Dashboard (Stats)
 exports.getIssuerDashboardData = async (req, res) => {
   try {
     const { userId } = req.user; // ID Issuer dari Token
@@ -389,10 +384,54 @@ exports.getIssuerDashboardData = async (req, res) => {
         totalClaimed,
         totalPending,
       },
-      recentHistory: rows, // Mengirimkan semua history (bisa dibatasi limit di frontend/sql)
+      recentHistory: rows,
     });
   } catch (error) {
     console.error("[ERROR] Get Dashboard Data:", error);
     res.status(500).json({ message: "Gagal memuat data dashboard." });
+  }
+};
+
+// --- TAMBAHAN PENTING ---
+// Get My Credentials (Untuk Dashboard Holder/Student)
+exports.getMyCredentials = async (req, res) => {
+  try {
+    const { userId } = req.user; // ID User yang sedang login
+
+    // Query: Ambil dokumen dimana owner_id = userId
+    // Asumsi: Saat diklaim, kolom 'owner_id' di tabel CREDENTIALS diupdate
+    // Atau jika belum diklaim tapi sudah ditujukan, bisa cek recipient_email/nim (tergantung desain DB)
+    // Di sini kita pakai logika sederhana: dokumen yang SUDAH DIKLAIM atau DIMILIKI user
+    
+    // Opsi A: Jika ingin menampilkan yang SUDAH diklaim saja:
+    // const query = `SELECT * FROM CREDENTIALS WHERE owner_id = $1 ORDER BY issue_date DESC`;
+    
+    // Opsi B (Lebih Luwes): Menampilkan juga yang PENDING klaim jika ada relasi NIM/Email di tabel USERS
+    // Untuk sekarang, kita pakai Opsi A (berbasis klaim owner_id) + history manual
+    
+    // Mari gunakan query standar:
+    const query = `
+        SELECT 
+            credential_id, 
+            recipient_name, 
+            document_type, 
+            program_name, -- Bisa null utk ijazah
+            issue_date, 
+            serial_number,
+            status, 
+            token_id, 
+            tx_hash,
+            file_url 
+        FROM CREDENTIALS 
+        WHERE owner_id = $1 -- Pastikan kolom ini ada di DB dan diisi saat klaim
+        ORDER BY created_at DESC
+    `;
+
+    const { rows } = await db.query(query, [userId]);
+
+    res.json(rows); // Mengembalikan array kosong [] jika tidak ada data
+  } catch (error) {
+    console.error("[ERROR] Get My Credentials:", error);
+    res.status(500).json({ message: "Gagal memuat aset digital anda." });
   }
 };
