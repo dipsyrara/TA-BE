@@ -8,27 +8,23 @@ const userRoutes = require("./src/routes/userRoutes");
 const credentialRoutes = require("./src/routes/credentialRoutes");
 
 const app = express();
-const PORT = process.env.PORT || 3001; // Backend berjalan di port 3001
+const PORT = process.env.PORT || 3001;
 
-// --- KONFIGURASI CORS YANG BENAR ---
 const corsOptions = {
-  origin: "http://localhost:5173", // Pastikan ini sesuai dengan port Frontend Anda
-  credentials: true, // PENTING: Izinkan cookie/token dikirim
+  origin: "http://localhost:5173",
+  credentials: true,
   optionsSuccessStatus: 200,
 };
 
-// Masukkan corsOptions ke dalam fungsi cors()
 app.use(cors(corsOptions));
 
 app.use(express.json());
 
-// Logger sederhana (bagus untuk debugging)
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   next();
 });
 
-// Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/users", userRoutes);

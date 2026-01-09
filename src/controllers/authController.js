@@ -81,7 +81,6 @@ exports.register = async (req, res) => {
     });
   } catch (error) {
     if (error.code === "23505") {
-      // Kode error unik PostgreSQL/Supabase
       return res.status(409).json({ message: "Email sudah terdaftar." });
     }
     console.error("Error saat register:", error.message);
@@ -134,7 +133,7 @@ exports.login = async (req, res) => {
         userId: user.user_id,
         email: user.email,
         role: user.role,
-        instId: user.inst_id, // Kirim juga ke frontend
+        instId: user.inst_id,
         fullName: user.full_name,
       },
     });

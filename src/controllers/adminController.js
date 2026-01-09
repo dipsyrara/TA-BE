@@ -1,11 +1,8 @@
 // src/controllers/adminController.js
 const db = require("../config/db");
 
-// Get Issuers (Pending & Active) for the Admin's Institution
 exports.getIssuersByInstitution = async (req, res) => {
   try {
-    // Ambil instId dari decoded token (req.user)
-    // Pastikan namanya sama dengan di authController (instId)
     const { instId } = req.user;
 
     if (!instId) {
@@ -32,12 +29,10 @@ exports.getIssuersByInstitution = async (req, res) => {
   }
 };
 
-// Approve Issuer (Yang sudah ada, sedikit penyesuaian query jika perlu)
 exports.approveIssuer = async (req, res) => {
   try {
-    const { id } = req.params; // user_id dari issuer
+    const { id } = req.params;
 
-    // Update status jadi active
     const query = `
         UPDATE USERS 
         SET status = 'active' 
@@ -63,10 +58,9 @@ exports.approveIssuer = async (req, res) => {
 
 exports.deleteIssuer = async (req, res) => {
   try {
-    const { id } = req.params; // ID user yang mau dihapus
-    const { instId } = req.user; // ID institusi admin yang sedang login
+    const { id } = req.params;
+    const { instId } = req.user;
 
-    // Query hapus: Pastikan ID cocok DAN institusinya sama (Security Check)
     const query = `
         DELETE FROM USERS 
         WHERE user_id = $1 AND inst_id = $2 AND role = 'issuer'

@@ -1,28 +1,44 @@
 const express = require("express");
 const router = express.Router();
 const credentialController = require("../controllers/credentialController");
-const { verifyToken, checkRole } = require("../middleware/authMiddleware");
-const multer = require("multer");
 
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
+// 1. IMPORT MIDDLEWARE AUTH (Sesuai dengan authMiddleware.js Anda)
+// Pastikan authMiddleware.js mengekspor { verifyToken, authorizeRole }
+const { verifyToken, authorizeRole } = require("../middleware/authMiddleware");
 
+// 2. IMPORT MIDDLEWARE UPLOAD
+const upload = require("../middleware/uploadMiddleware");
+
+// ==========================================
+// DEFINISI ROUTES
+// ==========================================
+
+// 1. POST: Terbitkan Dokumen (Hanya Issuer)
 router.post(
   "/issue",
-  verifyToken,
-  checkRole(["issuer"]), // <--- UBAH JADI 'issuer' (sesuai frontend)
-  upload.single("file"),
+  verifyToken, // Cek Login
+  authorizeRole(["issuer"]), // Cek Role Issuer
+  upload.single("file"), // Handle Upload File
   credentialController.issueCredential
 );
 
+// 2. POST: Klaim Dokumen (Hanya Owner/Mahasiswa)
 router.post(
   "/claim/:id",
   verifyToken,
-  checkRole(["owner"]), // <--- UBAH JADI 'owner' (sesuai frontend)
+  authorizeRole(["owner"]), // Cek Role Owner
   credentialController.claimCredential
+);
+
+// 3. GET: Ambil daftar jenis sertifikasi (Untuk Dropdown Frontend)
+router.get("/cert-types", credentialController.getCertificationTypes);
+
+// 4. GET: Dashboard Statistik (Hanya Issuer & Admin)
+router.get(
+  "/issuer/stats",
+  verifyToken,
+  authorizeRole(["issuer", "admin"]),
+  credentialController.getIssuerDashboardData
 );
 
 module.exports = router;

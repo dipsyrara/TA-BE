@@ -1,62 +1,90 @@
-// src/services/ipfsService.js
+const axios = require("axios");
+const FormData = require("form-data");
+require("dotenv").config();
 
-// 1. Impor library @pinata/sdk
-const pinataSDK = require('@pinata/sdk');
-require('dotenv').config();
-
-const { PINATA_API_KEY, PINATA_SECRET_KEY } = process.env;
-
-if (!PINATA_API_KEY || !PINATA_SECRET_KEY) {
-    throw new Error("PINATA_API_KEY atau PINATA_SECRET_KEY tidak ditemukan di .env");
-}
-
-// 2. Buat instance-nya menggunakan 'new'
-// Ini adalah cara penggunaan yang benar untuk @pinata/sdk
-const pinata = new pinataSDK(PINATA_API_KEY, PINATA_SECRET_KEY);
+const PINATA_BASE_URL = "https://api.pinata.cloud";
 
 /**
- * Mengunggah file (PDF/JPG) ke IPFS via Pinata.
+ * Mengunggah File (PDF/Gambar) ke IPFS via Pinata
+ * @param {ReadableStream} fileStream - Stream dari file yang diupload (req.file.buffer)
+ * @param {string} fileName - Nama file asli
+ * @returns {string} CID (Hash) dari file
  */
-async function uploadFileToIPFS(fileStream, fileName) {
-    try {
-        console.log(`Mengunggah file ${fileName} ke IPFS...`);
-        
-        // 3. Panggil fungsi 'pinFileStreamToIPFS'
-        const result = await pinata.pinFileStreamToIPFS(fileStream, {
-            pinataMetadata: { name: fileName }
-        });
-        
-        console.log("File berhasil diunggah. CID:", result.IpfsHash);
-        return result.IpfsHash; // Ini adalah CID-nya
+exports.uploadFileToIPFS = async (fileStream, fileName) => {
+  try {
+    const data = new FormData();
+    data.append("file", fileStream, fileName); // Stream, Nama File
 
-    } catch (error) {
-        console.error("Gagal mengunggah file ke IPFS:", error);
-        throw new Error("Gagal mengunggah file ke IPFS.");
-    }
-}
+    // Metadata Pinata (Opsional, agar rapi di dashboard Pinata)
+    const metadata = JSON.stringify({
+      name: `ASSET_${fileName}_${Date.now()}`,
+    });
+    data.append("pinataMetadata", metadata);
+
+    // Options Pinata
+    const options = JSON.stringify({
+      cidVersion: 0, // V0 (Qm...) lebih umum untuk NFT
+    });
+    data.append("pinataOptions", options);
+
+    const res = await axios.post(
+      `${PINATA_BASE_URL}/pinning/pinFileToIPFS`,
+      data,
+      {
+        maxBodyLength: "Infinity", // Penting untuk file besar
+        headers: {
+          Authorization: `Bearer ${process.env.PINATA_JWT}`, // Gunakan JWT
+          ...data.getHeaders(), // Header multipart/form-data otomatis
+        },
+      }
+    );
+
+    console.log("File uploaded to IPFS:", res.data.IpfsHash);
+    return res.data.IpfsHash;
+  } catch (error) {
+    console.error(
+      "Error uploading file to IPFS:",
+      error.response?.data || error.message
+    );
+    throw new Error("Gagal mengunggah file ke IPFS.");
+  }
+};
 
 /**
- * Mengunggah metadata.json ke IPFS via Pinata.
+ * Mengunggah JSON Metadata ke IPFS via Pinata
+ * @param {object} metadataJson - Objek JSON Metadata NFT standard ERC-721
+ * @returns {string} CID dari Metadata JSON
  */
-async function uploadJsonToIPFS(metadata) {
-    try {
-        console.log("Mengunggah metadata.json ke IPFS...");
+exports.uploadJsonToIPFS = async (metadataJson) => {
+  try {
+    const data = JSON.stringify({
+      pinataOptions: {
+        cidVersion: 0,
+      },
+      pinataMetadata: {
+        name: `METADATA_${metadataJson.name}_${Date.now()}`,
+      },
+      pinataContent: metadataJson, // Isi JSON Metadata
+    });
 
-        // 4. Panggil fungsi 'pinJSONToIPFS'
-        const result = await pinata.pinJSONToIPFS(metadata, {
-            pinataMetadata: { name: `${metadata.name}-metadata.json` }
-        });
+    const res = await axios.post(
+      `${PINATA_BASE_URL}/pinning/pinJSONToIPFS`,
+      data,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.PINATA_JWT}`,
+        },
+      }
+    );
 
-        console.log("Metadata JSON berhasil diunggah. CID:", result.IpfsHash);
-        return `ipfs://${result.IpfsHash}`;
-
-    } catch (error) {
-        console.error("Gagal mengunggah JSON ke IPFS:", error);
-        throw new Error("Gagal mengunggah JSON ke IPFS.");
-    }
-}
-
-module.exports = {
-    uploadFileToIPFS,
-    uploadJsonToIPFS
+    console.log("Metadata uploaded to IPFS:", res.data.IpfsHash);
+    return res.data.IpfsHash;
+  } catch (error) {
+    console.error(
+      "Error uploading JSON to IPFS:",
+      error.response?.data || error.message
+    );
+    throw new Error("Gagal mengunggah metadata ke IPFS.");
+  }
 };

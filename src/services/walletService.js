@@ -1,75 +1,75 @@
-// src/services/walletService.js
-
-// 1. Impor 'ethers' (tanpa {})
-const ethers = require("ethers");
+const { ethers } = require("ethers");
 require("dotenv").config();
+const artifact = require("../config/contractABI.json");
+const contractABI = artifact.abi ? artifact.abi : artifact;
+// 1. Ambil Konfigurasi dari .env
+const rpcUrl = process.env.RPC_URL;
+const contractAddress = process.env.CONTRACT_ADDRESS;
+const minterPrivateKey = process.env.MINTER_WALLET_PRIVATE_KEY;
+const treasuryPrivateKey = process.env.TREASURY_WALLET_PRIVATE_KEY;
+const treasuryAddress =
+  process.env.TREASURY_WALLET_ADDRESS ||
+  "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
-// 2. Muat variabel lingkungan
-const {
-    SEPOLIA_RPC_URL,
-    MINTER_WALLET_PRIVATE_KEY,
-    TREASURY_WALLET_PRIVATE_KEY,
-    CONTRACT_ADDRESS
-} = process.env;
+// Ambil Chain ID dari env atau gunakan default Hardhat (31337)
+const chainId = parseInt(process.env.CHAIN_ID || "31337");
 
-// !! PENTING !! (ABI kamu tetap sama)
-const CONTRACT_ABI = [
-    // ... Salin-tempel isi ABI dari Zikra di sini ...
-    "function safeMint(address to, string memory uri) public",
-    "function transferFrom(address from, address to, uint256 tokenId) public",
-    "function ownerOf(uint256 tokenId) public view returns (address)"
-];
+// 2. Validasi Konfigurasi Vital
+if (!rpcUrl) throw new Error("RPC_URL tidak ditemukan di .env");
+if (!contractAddress)
+  throw new Error("CONTRACT_ADDRESS tidak ditemukan di .env");
+if (!minterPrivateKey)
+  throw new Error("MINTER_WALLET_PRIVATE_KEY tidak ditemukan di .env");
 
-// 3. Siapkan Provider Ethers.js (SINTAKSIS v5)
-if (!SEPOLIA_RPC_URL) {
-    throw new Error("SEPOLIA_RPC_URL tidak ditemukan di .env");
-}
-// PERUBAHAN DI SINI: tambahkan '.providers'
-const provider = new ethers.providers.JsonRpcProvider(SEPOLIA_RPC_URL);
+// ============================================================
+// PERBAIKAN UTAMA DI SINI (STATIC NETWORK DEFINITION)
+// ============================================================
+// Kita berikan objek network { chainId, name } sebagai parameter kedua.
+// Ini mencegah ethers.js melakukan auto-detection yang sering gagal di localhost.
+const provider = new ethers.providers.JsonRpcProvider(rpcUrl, {
+  chainId: chainId,
+  name: "unknown", // Ethers v5 menggunakan 'unknown' untuk custom network/localhost
+});
 
+// 4. Inisialisasi Wallet
+// Wallet Minter (Backend): Digunakan untuk melakukan transaksi (minting)
+const minterWallet = new ethers.Wallet(minterPrivateKey, provider);
 
-// 4. Siapkan Signer (Wallet)
-// (Sintaksis ini sama untuk v5 dan v6)
-if (!MINTER_WALLET_PRIVATE_KEY) {
-    throw new Error("MINTER_WALLET_PRIVATE_KEY tidak ditemukan di .env");
-}
-const minterSigner = new ethers.Wallet(MINTER_WALLET_PRIVATE_KEY, provider);
-console.log("Wallet Minter berhasil dimuat. Alamat:", minterSigner.address);
-
-if (!TREASURY_WALLET_PRIVATE_KEY) {
-    throw new Error("TREASURY_WALLET_PRIVATE_KEY tidak ditemukan di .env");
-}
-const treasurySigner = new ethers.Wallet(TREASURY_WALLET_PRIVATE_KEY, provider);
-console.log("Wallet Treasury berhasil dimuat. Alamat:", treasurySigner.address);
-
-
-// 5. Ekspor Fungsi Layanan
-// (Sintaksis ini sama untuk v5 dan v6)
-
-function getContractWithMinter() {
-    if (CONTRACT_ABI.length === 0) {
-        throw new Error("CONTRACT_ABI masih kosong. Minta ABI dari Zikra.");
-    }
-    return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, minterSigner);
+// Wallet Treasury (Opsional): Digunakan jika nanti ada fitur transfer dari treasury
+let treasuryWallet = null;
+if (treasuryPrivateKey) {
+  try {
+    treasuryWallet = new ethers.Wallet(treasuryPrivateKey, provider);
+  } catch (e) {
+    console.warn("Treasury Private Key invalid, fitur claim mungkin terbatas.");
+  }
 }
 
-function getContractWithTreasury() {
-    if (CONTRACT_ABI.length === 0) {
-        throw new Error("CONTRACT_ABI masih kosong. Minta ABI dari Zikra.");
-    }
-    return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, treasurySigner);
-}
+// Ekspor Alamat Treasury agar bisa dipakai di Controller
+exports.TREASURY_WALLET_ADDRESS = treasuryAddress;
 
-function getReadOnlyContract() {
-     if (CONTRACT_ABI.length === 0) {
-        throw new Error("CONTRACT_ABI masih kosong. Minta ABI dari Zikra.");
-    }
-    return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
-}
+// ==========================================
+// FUNGSI-FUNGSI CONTRACT
+// ==========================================
 
-module.exports = {
-    getContractWithMinter,
-    getContractWithTreasury,
-    getReadOnlyContract,
-    TREASURY_WALLET_ADDRESS: treasurySigner.address 
+// A. Contract dengan akses Minter (Write Access - Bayar Gas)
+exports.getContractWithMinter = () => {
+  return new ethers.Contract(contractAddress, contractABI, minterWallet);
 };
+
+// B. Contract dengan akses Treasury (Write Access - Bayar Gas saat Transfer/Claim)
+exports.getContractWithTreasury = () => {
+  if (!treasuryWallet) {
+    throw new Error("Treasury Wallet belum dikonfigurasi dengan benar.");
+  }
+  return new ethers.Contract(contractAddress, contractABI, treasuryWallet);
+};
+
+// C. Contract Read-Only (Cuma baca data, gratis gas)
+exports.getReadOnlyContract = () => {
+  return new ethers.Contract(contractAddress, contractABI, provider);
+};
+
+// Log Debugging saat start (Bisa dihapus nanti)
+console.log(`[WALLET] Minter Address: ${minterWallet.address}`);
+console.log(`[WALLET] Connected to RPC: ${rpcUrl}`);
