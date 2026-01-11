@@ -2,38 +2,27 @@ const express = require("express");
 const router = express.Router();
 const credentialController = require("../controllers/credentialController");
 
-// 1. IMPORT MIDDLEWARE AUTH (Sesuai dengan authMiddleware.js Anda)
-// Pastikan authMiddleware.js mengekspor { verifyToken, authorizeRole }
 const { verifyToken, authorizeRole } = require("../middleware/authMiddleware");
 
-// 2. IMPORT MIDDLEWARE UPLOAD
 const upload = require("../middleware/uploadMiddleware");
 
-// ==========================================
-// DEFINISI ROUTES
-// ==========================================
-
-// 1. POST: Terbitkan Dokumen (Hanya Issuer)
 router.post(
   "/issue",
-  verifyToken, // Cek Login
-  authorizeRole(["issuer"]), // Cek Role Issuer
-  upload.single("file"), // Handle Upload File
+  verifyToken,
+  authorizeRole(["issuer"]),
+  upload.single("file"),
   credentialController.issueCredential
 );
 
-// 2. POST: Klaim Dokumen (Hanya Owner/Mahasiswa)
 router.post(
-  "/claim/:id",
+  "/claim",
   verifyToken,
-  authorizeRole(["owner"]), // Cek Role Owner
+  authorizeRole(["owner"]),
   credentialController.claimCredential
 );
 
-// 3. GET: Ambil daftar jenis sertifikasi (Untuk Dropdown Frontend)
 router.get("/cert-types", credentialController.getCertificationTypes);
 
-// 4. GET: Dashboard Statistik (Hanya Issuer & Admin)
 router.get(
   "/issuer/stats",
   verifyToken,
@@ -41,12 +30,10 @@ router.get(
   credentialController.getIssuerDashboardData
 );
 
-// 5. GET: List Dokumen Milik Saya (Untuk Holder Dashboard)
-// Endpoint ini akan dipanggil oleh Frontend: /api/credentials/my-documents
 router.get(
   "/my-documents",
   verifyToken,
-  authorizeRole(["owner"]), // Pastikan role ini sesuai ("owner" atau "student")
+  authorizeRole(["owner"]),
   credentialController.getMyCredentials
 );
 

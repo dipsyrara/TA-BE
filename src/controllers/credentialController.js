@@ -1,17 +1,14 @@
 const db = require("../config/db");
-const bcrypt = require("bcryptjs"); // Pastikan bcrypt sudah di-import
+const bcrypt = require("bcryptjs");
 const ipfsService = require("../services/ipfsService");
 const walletService = require("../services/walletService");
 const { Readable } = require("stream");
 
-// ==========================================
-// TAMBAHAN: GET CERTIFICATION TYPES
-// ==========================================
 exports.getCertificationTypes = async (req, res) => {
   try {
     const query = "SELECT name FROM CERTIFICATION_TYPES ORDER BY name ASC";
     const result = await db.query(query);
-    // Map agar return-nya array string simpel: ["AWS", "BNSP", ...]
+
     const types = result.rows.map((row) => row.name);
     res.json(types);
   } catch (error) {
@@ -20,27 +17,21 @@ exports.getCertificationTypes = async (req, res) => {
   }
 };
 
-// ==========================================
-// 1. ISSUE CREDENTIAL (Penerbitan)
-// ==========================================
 exports.issueCredential = async (req, res) => {
   try {
-    // 1. Tangkap Data dari Form Dynamic
     const {
       recipient_name,
-      recipient_nim, // Nullable (Ijazah)
-      mother_name, // Nullable (Ijazah) - Akan di-hash sebagai secret answer
+      recipient_nim,
+      mother_name,
       serial_number,
-      program_name, // Nullable (Sertifikat)
+      program_name,
       document_type,
       issue_date,
     } = req.body;
 
-    // Ambil ID Institusi dan User ID Penerbit dari Token
     const { instId, userId } = req.user;
     const file = req.file;
 
-    // 2. Validasi Input
     if (!file) {
       return res.status(400).json({ message: "File dokumen wajib diunggah." });
     }
@@ -54,29 +45,23 @@ exports.issueCredential = async (req, res) => {
       `[ISSUE] Memulai penerbitan untuk: ${recipient_name} (${document_type})`
     );
 
-    // --- GENERATE HASH UNTUK KEAMANAN KLAIM ---
     const salt = await bcrypt.genSalt(10);
     const doc_serial_number_hash = await bcrypt.hash(serial_number, salt);
 
-    // Untuk secret answer, kita gunakan mother_name (jika ada) atau default value/program_name
     let secretAnswerRaw = mother_name || serial_number;
     const secret_answer_hash = await bcrypt.hash(secretAnswerRaw, salt);
-    // -------------------------------------------
 
-    // 3. Upload File PDF ke IPFS
     console.log("[IPFS] Mengunggah file PDF...");
     const fileStream = Readable.from(file.buffer);
     const assetCid = await ipfsService.uploadFileToIPFS(
       fileStream,
       file.originalname
     );
-    // URL ini aman untuk metadata
+
     const fileUrlIpfs = `ipfs://${assetCid}`;
 
-    // 4. Buat & Upload Metadata JSON ke IPFS
     console.log("[IPFS] Membuat Metadata JSON...");
 
-    // Tentukan atribut berdasarkan jenis dokumen
     const attributes = [
       { trait_type: "Recipient Name", value: recipient_name },
       { trait_type: "Document Type", value: document_type },
@@ -103,18 +88,15 @@ exports.issueCredential = async (req, res) => {
     const tokenUri = `ipfs://${metadataCid}`;
     console.log("[IPFS] Metadata uploaded:", tokenUri);
 
-    // 5. Minting NFT ke Blockchain (Mint-to-Treasury)
     console.log("[BLOCKCHAIN] Memanggil safeMint...");
     const contract = walletService.getContractWithMinter();
     const treasuryAddress = walletService.TREASURY_WALLET_ADDRESS;
 
-    // Panggil fungsi Smart Contract
     const tx = await contract.safeMint(treasuryAddress, tokenUri);
     console.log("[BLOCKCHAIN] Menunggu konfirmasi TX:", tx.hash);
 
-    const receipt = await tx.wait(); // Tunggu sampai mined
+    const receipt = await tx.wait();
 
-    // Ambil Token ID dari Event Transfer
     const transferEvent = receipt.logs.find((e) => e.eventName === "Transfer");
     let tokenId = "0";
     if (transferEvent) {
@@ -127,7 +109,6 @@ exports.issueCredential = async (req, res) => {
 
     console.log(`[SUCCESS] NFT Minted! Token ID: ${tokenId}`);
 
-    // 6. Simpan Data ke Database (Tabel CREDENTIALS)
     const insertQuery = `
             INSERT INTO CREDENTIALS (
                 inst_id, issuer_id, 
@@ -139,7 +120,6 @@ exports.issueCredential = async (req, res) => {
             RETURNING credential_id;
         `;
 
-    // Kita simpan Link Gateway Publik agar Frontend bisa menampilkan file tanpa koneksi IPFS lokal
     const publicFileUrl = `https://ipfs.io/ipfs/${assetCid}`;
 
     await db.query(insertQuery, [
@@ -153,11 +133,11 @@ exports.issueCredential = async (req, res) => {
       serial_number,
       issue_date,
       publicFileUrl,
-      tokenUri, // ipfs_hash (metadata)
+      tokenUri,
       tokenId,
       tx.hash,
-      doc_serial_number_hash, // Value $14
-      secret_answer_hash, // Value $15
+      doc_serial_number_hash,
+      secret_answer_hash,
     ]);
 
     res.status(201).json({
@@ -181,115 +161,146 @@ exports.issueCredential = async (req, res) => {
   }
 };
 
-// ==========================================
-// 2. CLAIM CREDENTIAL (Klaim oleh Mahasiswa)
-// ==========================================
 exports.claimCredential = async (req, res) => {
   try {
-    const { cred_id } = req.params;
-    const { userId } = req.user; // User ID Mahasiswa yang login
-    const { input_nim, input_mother_name, input_serial } = req.body;
+    const { userId } = req.user;
 
-    console.log(`[CLAIM] User ${userId} mencoba klaim Cred ID ${cred_id}`);
+    const {
+      doc_type,
+      full_name,
+      identity_number,
+      cert_title,
+      doc_serial,
+      mother_name,
+      wallet_address,
+    } = req.body;
 
-    // 1. Cek Data Kredensial di DB
-    const credQuery = "SELECT * FROM CREDENTIALS WHERE credential_id = $1";
-    const credResult = await db.query(credQuery, [cred_id]);
+    console.log(`[CLAIM START] User ${userId} mencari dokumen:`, req.body);
 
-    if (credResult.rows.length === 0) {
-      return res.status(404).json({ message: "Dokumen tidak ditemukan." });
-    }
+    let credential = null;
 
-    const credential = credResult.rows[0];
+    if (doc_type === "ijazah") {
+      const query = `
+        SELECT * FROM CREDENTIALS 
+        WHERE document_type = 'Ijazah Sarjana' 
+          AND recipient_name ILIKE $1 
+          AND recipient_nim = $2
+          AND serial_number = $3
+      `;
 
-    // 2. Cek Status
-    if (credential.status === "claimed") {
-      return res.status(400).json({ message: "Dokumen ini sudah diklaim." });
-    }
+      const result = await db.query(query, [
+        full_name.trim(),
+        identity_number.trim(),
+        doc_serial.trim(),
+      ]);
 
-    // 3. Validasi Data (Logika Dinamis)
-    let isValid = false;
-
-    if (credential.document_type === "Ijazah Sarjana") {
-      // Validasi Ketat: NIM & Nama Ibu
-      const dbMother = credential.mother_name
-        ? credential.mother_name.toLowerCase().trim()
-        : "";
-      const inputMother = input_mother_name
-        ? input_mother_name.toLowerCase().trim()
-        : "";
-      const dbNim = credential.recipient_nim
-        ? credential.recipient_nim.trim()
-        : "";
-      const inputNim = input_nim ? input_nim.trim() : "";
-
-      if (dbNim === inputNim && dbMother === inputMother && dbMother !== "") {
-        isValid = true;
-      }
+      if (result.rows.length > 0) credential = result.rows[0];
     } else {
-      // Validasi Sertifikat: Nomor Seri
-      if (credential.serial_number === input_serial) {
-        isValid = true;
-      }
+      const query = `
+        SELECT * FROM CREDENTIALS 
+        WHERE document_type != 'Ijazah Sarjana' 
+          AND recipient_name ILIKE $1 
+          AND program_name ILIKE $2
+          AND serial_number = $3
+      `;
+
+      const result = await db.query(query, [
+        full_name.trim(),
+        cert_title.trim(),
+        doc_serial.trim(),
+      ]);
+
+      if (result.rows.length > 0) credential = result.rows[0];
     }
 
-    if (!isValid) {
-      return res
-        .status(403)
-        .json({ message: "Verifikasi gagal. Data identitas tidak cocok." });
-    }
-
-    // 4. Ambil Wallet Address User
-    const userQuery = "SELECT wallet_addr FROM USERS WHERE user_id = $1";
-    const userResult = await db.query(userQuery, [userId]);
-    const userWallet = userResult.rows[0]?.wallet_addr;
-
-    if (!userWallet) {
-      return res.status(400).json({
+    if (!credential) {
+      console.log("[CLAIM FAIL] Dokumen tidak ditemukan di DB.");
+      return res.status(404).json({
         message:
-          "Harap hubungkan wallet Metamask di profil Anda terlebih dahulu.",
+          "Dokumen tidak ditemukan. Pastikan ejaan Nama, Judul Sertifikasi, dan Nomor Seri SAMA PERSIS dengan dokumen fisik.",
       });
     }
 
-    // 5. Transfer NFT di Blockchain
+    console.log("[CLAIM FOUND] Dokumen ditemukan:", credential.credential_id);
+
+    if (credential.status === "claimed") {
+      return res
+        .status(400)
+        .json({ message: "Dokumen ini sudah diklaim oleh user lain." });
+    }
+
+    if (doc_type === "ijazah") {
+      const dbMother = credential.mother_name
+        ? credential.mother_name.toLowerCase().trim()
+        : "";
+      const inputMother = mother_name ? mother_name.toLowerCase().trim() : "";
+
+      if (dbMother !== inputMother) {
+        return res
+          .status(403)
+          .json({ message: "Verifikasi gagal. Nama Ibu Kandung tidak cocok." });
+      }
+    }
+
+    let targetWallet = wallet_address;
+
+    if (!targetWallet) {
+      const userQ = await db.query(
+        "SELECT wallet_addr FROM USERS WHERE user_id = $1",
+        [userId]
+      );
+      targetWallet = userQ.rows[0]?.wallet_addr;
+    }
+
+    if (!targetWallet) {
+      return res.status(400).json({ message: "Wallet Address diperlukan." });
+    }
+
     console.log(
-      `[BLOCKCHAIN] Transfer Token ${credential.token_id} to ${userWallet}...`
+      `[BLOCKCHAIN] Transfer Token ${credential.token_id} to ${targetWallet}...`
     );
+
     const contract = walletService.getContractWithTreasury();
     const treasuryAddress = walletService.TREASURY_WALLET_ADDRESS;
 
     const tx = await contract.transferFrom(
       treasuryAddress,
-      userWallet,
+      targetWallet,
       credential.token_id
     );
     await tx.wait();
 
-    // 6. Update Status di DB dan Set Owner Baru
     const updateQuery = `
-            UPDATE CREDENTIALS 
-            SET status = 'claimed', owner_id = $1
-            WHERE credential_id = $2
-        `;
-    await db.query(updateQuery, [userId, cred_id]);
+      UPDATE CREDENTIALS 
+      SET status = 'claimed', owner_id = $1, wallet_address = $2
+      WHERE credential_id = $3
+    `;
+    await db.query(updateQuery, [
+      userId,
+      targetWallet,
+      credential.credential_id,
+    ]);
 
     res.status(200).json({
       message: "Klaim Berhasil! Aset kini ada di wallet Anda.",
       txHash: tx.hash,
+      data: credential,
     });
   } catch (error) {
     console.error("[ERROR] Claim:", error);
-    res
-      .status(500)
-      .json({ message: "Gagal mengklaim dokumen.", error: error.message });
+
+    if (error.reason) {
+      return res
+        .status(500)
+        .json({ message: `Blockchain Error: ${error.reason}` });
+    }
+    res.status(500).json({
+      message: "Terjadi kesalahan server saat klaim.",
+      error: error.message,
+    });
   }
 };
 
-// ==========================================
-// 3. SEARCH & VERIFY (Publik)
-// ==========================================
-
-// Cari Dokumen (Langkah 1 Verifikasi Publik)
 exports.searchCredentials = async (req, res) => {
   try {
     const { name, institution } = req.query;
@@ -313,7 +324,6 @@ exports.searchCredentials = async (req, res) => {
   }
 };
 
-// Verifikasi Detail (Langkah 2 - Scan QR/UUID)
 exports.verifyCredential = async (req, res) => {
   try {
     const { id } = req.params;
@@ -333,7 +343,6 @@ exports.verifyCredential = async (req, res) => {
 
     const data = result.rows[0];
 
-    // Validasi On-Chain Realtime (Read-Only)
     const contract = walletService.getReadOnlyContract();
     const ownerOnChain = await contract.ownerOf(data.token_id);
 
@@ -352,16 +361,10 @@ exports.verifyCredential = async (req, res) => {
   }
 };
 
-// ==========================================
-// 4. DASHBOARD DATA
-// ==========================================
-
-// Get Issuer Dashboard (Stats)
 exports.getIssuerDashboardData = async (req, res) => {
   try {
-    const { userId } = req.user; // ID Issuer dari Token
+    const { userId } = req.user;
 
-    // Query 1: Ambil semua dokumen yang diterbitkan issuer ini
     const query = `
       SELECT 
         credential_id, recipient_name, document_type, 
@@ -373,7 +376,6 @@ exports.getIssuerDashboardData = async (req, res) => {
 
     const { rows } = await db.query(query, [userId]);
 
-    // Hitung Statistik
     const totalIssued = rows.length;
     const totalClaimed = rows.filter((r) => r.status === "claimed").length;
     const totalPending = rows.filter((r) => r.status === "issued").length;
@@ -392,24 +394,10 @@ exports.getIssuerDashboardData = async (req, res) => {
   }
 };
 
-// --- TAMBAHAN PENTING ---
-// Get My Credentials (Untuk Dashboard Holder/Student)
 exports.getMyCredentials = async (req, res) => {
   try {
-    const { userId } = req.user; // ID User yang sedang login
+    const { userId } = req.user;
 
-    // Query: Ambil dokumen dimana owner_id = userId
-    // Asumsi: Saat diklaim, kolom 'owner_id' di tabel CREDENTIALS diupdate
-    // Atau jika belum diklaim tapi sudah ditujukan, bisa cek recipient_email/nim (tergantung desain DB)
-    // Di sini kita pakai logika sederhana: dokumen yang SUDAH DIKLAIM atau DIMILIKI user
-    
-    // Opsi A: Jika ingin menampilkan yang SUDAH diklaim saja:
-    // const query = `SELECT * FROM CREDENTIALS WHERE owner_id = $1 ORDER BY issue_date DESC`;
-    
-    // Opsi B (Lebih Luwes): Menampilkan juga yang PENDING klaim jika ada relasi NIM/Email di tabel USERS
-    // Untuk sekarang, kita pakai Opsi A (berbasis klaim owner_id) + history manual
-    
-    // Mari gunakan query standar:
     const query = `
         SELECT 
             credential_id, 
@@ -429,7 +417,7 @@ exports.getMyCredentials = async (req, res) => {
 
     const { rows } = await db.query(query, [userId]);
 
-    res.json(rows); // Mengembalikan array kosong [] jika tidak ada data
+    res.json(rows);
   } catch (error) {
     console.error("[ERROR] Get My Credentials:", error);
     res.status(500).json({ message: "Gagal memuat aset digital anda." });

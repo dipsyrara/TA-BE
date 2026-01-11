@@ -1,4 +1,3 @@
-// src/controllers/adminController.js
 const db = require("../config/db");
 
 exports.getIssuersByInstitution = async (req, res) => {
