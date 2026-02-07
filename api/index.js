@@ -10,7 +10,24 @@ const credentialRoutes = require("./src/routes/credentialRoutes");
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+const allowedOrigins = [
+  "https://verichain-black.vercel.app",
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error("Akses ditolak oleh kebijakan CORS"));
+      }
+    },
+    credentials: true,
+  }),
+);
 
 app.use(express.json());
 
@@ -27,5 +44,11 @@ app.use("/api/credentials", credentialRoutes);
 app.get("/", (req, res) => {
   res.send("Selamat datang di Backend Server Ijazah RWA!");
 });
+
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`Server berjalan di http://localhost:${PORT}`);
+  });
+}
 
 module.exports = app;
