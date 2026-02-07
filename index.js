@@ -2,10 +2,10 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 
-const authRoutes = require(".api/src/routes/authRoutes");
-const adminRoutes = require(".api/src/routes/adminRoutes");
-const userRoutes = require(".api/src/routes/userRoutes");
-const credentialRoutes = require(".api/src/routes/credentialRoutes");
+const authRoutes = require("./src/routes/authRoutes");
+const adminRoutes = require("./src/routes/adminRoutes");
+const userRoutes = require("./src/routes/userRoutes");
+const credentialRoutes = require("./src/routes/credentialRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
