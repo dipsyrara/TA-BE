@@ -6,10 +6,25 @@ const { Readable } = require("stream");
 
 exports.getCertificationTypes = async (req, res) => {
   try {
-    const query = "SELECT name FROM CERTIFICATION_TYPES ORDER BY name ASC";
+    console.log("[DEBUG] Sedang mengambil rekomendasi tipe sertifikat...");
+
+    const query = `
+      SELECT DISTINCT TRIM(name) as name FROM (
+        SELECT name FROM CERTIFICATION_TYPES
+        UNION
+        SELECT program_name as name FROM CREDENTIALS WHERE program_name IS NOT NULL AND length(program_name) > 0
+        UNION
+        SELECT document_type as name FROM CREDENTIALS WHERE document_type IS NOT NULL AND length(document_type) > 0
+      ) as combined_types
+      ORDER BY name ASC
+    `;
+
     const result = await db.query(query);
 
     const types = result.rows.map((row) => row.name);
+
+    console.log("[DEBUG] Data ditemukan:", types);
+
     res.json(types);
   } catch (error) {
     console.error("Error fetching cert types:", error);
@@ -42,7 +57,7 @@ exports.issueCredential = async (req, res) => {
     }
 
     console.log(
-      `[ISSUE] Memulai penerbitan untuk: ${recipient_name} (${document_type})`
+      `[ISSUE] Memulai penerbitan untuk: ${recipient_name} (${document_type})`,
     );
 
     const salt = await bcrypt.genSalt(10);
@@ -55,7 +70,7 @@ exports.issueCredential = async (req, res) => {
     const fileStream = Readable.from(file.buffer);
     const assetCid = await ipfsService.uploadFileToIPFS(
       fileStream,
-      file.originalname
+      file.originalname,
     );
 
     const fileUrlIpfs = `ipfs://${assetCid}`;
@@ -90,20 +105,23 @@ exports.issueCredential = async (req, res) => {
 
     console.log("[BLOCKCHAIN] Memanggil safeMint...");
     const contract = walletService.getContractWithMinter();
-    const treasuryAddress = walletService.TREASURY_WALLET_ADDRESS;
+    const treasuryAddress = walletService.TREASURY_WALLET_ADDR;
+    console.log(`[INFO] Minting ke alamat Treasury: ${treasuryAddress}`);
 
-    const tx = await contract.safeMint(treasuryAddress, tokenUri);
+    const tx = await contract.safeMint(treasuryAddress, tokenUri, {
+      gasLimit: 500000,
+    });
     console.log("[BLOCKCHAIN] Menunggu konfirmasi TX:", tx.hash);
 
     const receipt = await tx.wait();
 
-    const transferEvent = receipt.logs.find((e) => e.eventName === "Transfer");
+    const transferEvent = receipt.events?.find((e) => e.event === "Transfer");
     let tokenId = "0";
     if (transferEvent) {
       tokenId = transferEvent.args[2].toString();
     } else {
       console.warn(
-        "Event Transfer tidak ditemukan, menggunakan ID default sementara."
+        "Event Transfer tidak ditemukan, menggunakan ID default sementara.",
       );
     }
 
@@ -248,7 +266,7 @@ exports.claimCredential = async (req, res) => {
     if (!targetWallet) {
       const userQ = await db.query(
         "SELECT wallet_addr FROM USERS WHERE user_id = $1",
-        [userId]
+        [userId],
       );
       targetWallet = userQ.rows[0]?.wallet_addr;
     }
@@ -258,17 +276,21 @@ exports.claimCredential = async (req, res) => {
 
     // --- PROSES BLOCKCHAIN ---
     console.log(
-      `[BLOCKCHAIN] Transfer Token ${credential.token_id} to ${targetWallet}...`
+      `[BLOCKCHAIN] Transfer Token ${credential.token_id} to ${targetWallet}...`,
     );
 
     const contract = walletService.getContractWithTreasury();
-    const treasuryAddress = walletService.TREASURY_WALLET_ADDRESS;
+    const sourceAddress = walletService.TREASURY_WALLET_ADDR;
+    console.log(
+      `[BLOCKCHAIN] Transfer dari ${sourceAddress} ke ${targetWallet}...`,
+    );
 
     try {
       const tx = await contract.transferFrom(
-        treasuryAddress,
+        sourceAddress,
         targetWallet,
-        credential.token_id
+        credential.token_id,
+        { gasLimit: 500000 },
       );
       await tx.wait();
       console.log(`[BLOCKCHAIN] Sukses. Hash: ${tx.hash}`);
@@ -282,7 +304,7 @@ exports.claimCredential = async (req, res) => {
         bcError.message.includes("TransferCallerNotOwner")
       ) {
         console.warn(
-          "[WARN] Blockchain gagal transfer, mungkin sudah dimiliki user. Lanjut update DB."
+          "[WARN] Blockchain gagal transfer, mungkin sudah dimiliki user. Lanjut update DB.",
         );
         // Kita lanjut ke update DB agar data sinkron
       } else {

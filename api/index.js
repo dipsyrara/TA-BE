@@ -28,6 +28,4 @@ app.get("/", (req, res) => {
   res.send("Selamat datang di Backend Server Ijazah RWA!");
 });
 
-app.listen(PORT, () => {
-  console.log(`Server berjalan di http://localhost:${PORT}`);
-});
+module.exports = app;

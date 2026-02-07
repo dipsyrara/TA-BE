@@ -7,10 +7,9 @@ const rpcUrl = process.env.RPC_URL;
 const contractAddress = process.env.CONTRACT_ADDRESS;
 const minterPrivateKey = process.env.MINTER_WALLET_PRIVATE_KEY;
 const treasuryPrivateKey = process.env.TREASURY_WALLET_PRIVATE_KEY;
-const treasuryAddress =
-  process.env.TREASURY_WALLET_ADDRESS ||
-  "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
-
+const treasuryAddress = process.env.TREASURY_WALLET_ADDR;
+if (!treasuryAddress)
+  throw new Error("TREASURY_WALLET_ADDR wajib diisi di .env");
 const chainId = parseInt(process.env.CHAIN_ID || "31337");
 
 if (!rpcUrl) throw new Error("RPC_URL tidak ditemukan di .env");
@@ -35,7 +34,7 @@ if (treasuryPrivateKey) {
   }
 }
 
-exports.TREASURY_WALLET_ADDRESS = treasuryAddress;
+exports.TREASURY_WALLET_ADDR = treasuryAddress;
 
 exports.getContractWithMinter = () => {
   return new ethers.Contract(contractAddress, contractABI, minterWallet);
