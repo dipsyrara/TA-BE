@@ -239,6 +239,7 @@ exports.claimCredential = async (req, res) => {
       // Cek apakah yang nge-klaim orang yang sama? Jika iya, kembalikan sukses saja
       if (credential.owner_id === userId) {
         return res.status(200).json({
+          alreadyClaimed: true,
           message: "Anda sudah mengklaim dokumen ini sebelumnya.",
           data: credential,
         });
@@ -289,6 +290,8 @@ exports.claimCredential = async (req, res) => {
       `[BLOCKCHAIN] Transfer dari ${sourceAddress} ke ${targetWallet}...`,
     );
 
+    let claimTxHash = null;
+
     try {
       const tx = await contract.transferFrom(
         sourceAddress,
@@ -297,10 +300,8 @@ exports.claimCredential = async (req, res) => {
         { gasLimit: 500000 },
       );
       await tx.wait();
+      claimTxHash = tx.hash;
       console.log(`[BLOCKCHAIN] Sukses. Hash: ${tx.hash}`);
-
-      // Simpan hash transaksi claim (opsional, jika kolom ada)
-      // credential.claim_tx_hash = tx.hash;
     } catch (bcError) {
       // PENANGANAN ERROR SPESIFIK: Jika Token sudah ada di mahasiswa (kasus sinkronisasi)
       if (
@@ -329,6 +330,7 @@ exports.claimCredential = async (req, res) => {
 
     res.status(200).json({
       message: "Klaim Berhasil! Aset kini ada di wallet Anda.",
+      txHash: claimTxHash,
       data: credential,
     });
   } catch (error) {
