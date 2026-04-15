@@ -262,16 +262,20 @@ exports.claimCredential = async (req, res) => {
     }
 
     // --- SETUP WALLET ---
-    let targetWallet = wallet_address;
+    const userQ = await db.query(
+      "SELECT wallet_addr FROM USERS WHERE user_id = $1",
+      [userId],
+    );
+    const targetWallet = userQ.rows[0]?.wallet_addr;
+
     if (!targetWallet) {
-      const userQ = await db.query(
-        "SELECT wallet_addr FROM USERS WHERE user_id = $1",
-        [userId],
-      );
-      targetWallet = userQ.rows[0]?.wallet_addr;
+      return res.status(400).json({ message: "Akun ini belum ditautkan ke wallet. Harap hubungkan wallet melalui halaman dasbor." });
     }
-    if (!targetWallet) {
-      return res.status(400).json({ message: "Wallet Address diperlukan." });
+
+    if (wallet_address && wallet_address.toLowerCase() !== targetWallet.toLowerCase()) {
+      return res.status(403).json({ 
+        message: "Akses Klaim Ditolak: MetaMask yang terhubung tidak sama dengan wallet yang terdaftar permanen di akun VeriChain Anda." 
+      });
     }
 
     // --- PROSES BLOCKCHAIN ---
