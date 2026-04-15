@@ -14,7 +14,24 @@ exports.linkWallet = async (req, res) => {
       });
     }
 
-    // 2. Update Database
+    // 2. Cek apakah pengguna sudah memiliki alamat wallet secara permanen
+    const checkQuery = "SELECT wallet_addr FROM USERS WHERE user_id = $1";
+    const checkResult = await db.query(checkQuery, [userId]);
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: "Pengguna tidak ditemukan." });
+    }
+
+    const currentWallet = checkResult.rows[0].wallet_addr;
+    
+    // Jika currentWallet tidak kosong dan berbeda dengan yang dikirimkan, maka blokir
+    if (currentWallet && currentWallet.toLowerCase() !== walletAddress.toLowerCase()) {
+      return res.status(403).json({
+        message: "Akses Ditolak: Akun VeriChain ini telah terikat secara permanen dengan alamat wallet lain.",
+      });
+    }
+
+    // 3. Update Database
     const updateQuery = `
             UPDATE USERS
             SET wallet_addr = $1
@@ -23,10 +40,6 @@ exports.linkWallet = async (req, res) => {
         `;
 
     const result = await db.query(updateQuery, [walletAddress, userId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Pengguna tidak ditemukan." });
-    }
 
     // ---------------------------------------------------------
     // 3. LOGIKA AUTO-FAUCET (Versi Ethers v5)
